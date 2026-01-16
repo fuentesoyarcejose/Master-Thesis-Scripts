@@ -2,7 +2,7 @@ import os
 from google import genai
 
 # Use the key from the original script or env var
-GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "AIzaSyB8wv4vhyxvbFdJ4YSK7gBa28YI9UrApjk")
+GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
 
 def list_models():
     try:
