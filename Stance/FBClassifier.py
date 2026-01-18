@@ -476,10 +476,6 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     
-    # Update global MODEL_DIR if specified
-    if args.model_dir != MODEL_DIR:
-        MODEL_DIR = args.model_dir
-    
     # Handle default input CSV if not provided
     if args.input_csv is None:
         if DEFAULT_INPUT_CSV:
