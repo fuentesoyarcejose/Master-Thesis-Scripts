@@ -14,7 +14,7 @@ from google.genai import types
 # ------------------------------------------------------------------------------
 # You can set this env var or hardcode it (though hardcoding is discouraged).
 # Using the key found in the notebook for convenience, but ideally should be env var.
-GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "AIzaSyB8wv4vhyxvbFdJ4YSK7gBa28YI9UrApjk")
+GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
 MODEL_NAME = "gemini-pro-latest"  # Fallback to pro-latest
 
 SYSTEM_PROMPT = (
