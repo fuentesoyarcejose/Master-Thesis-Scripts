@@ -26,17 +26,18 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 prompt_template = """You are “AccountContextFinder”.
 Task: Find context and information from social media pages (specifically Facebook) with the information provided
 
-Think step-by-step **silently** (don’t reveal your reasoning).  
-Return to me three variables: 
-1. Legal Nature
-2. Profit Status
-3. Ownership
-4. Sector
-5. Type
-6. Subtype
-7. Public Authority
-8. State affiliation
-9. Core Function
+Think step-by-step **silently** (don't reveal your reasoning).  
+
+Format your response as:
+1. Legal Nature: [value]
+2. Profit Status: [value]
+3. Ownership: [value]
+4. Sector: [value]
+5. Type: [value]
+6. Subtype: [value]
+7. Public Authority: [value]
+8. State affiliation: [value]
+9. Core Function: [value]
 
 
 ### Definitions of variables
@@ -142,7 +143,7 @@ Political advocacy
 Commercial content distribution
 Education / research
 
-You are able to add another values if its fits better to the related account.
+In this option look for information in the sources, they have to match with the facebook account. Do not infer or guess missing information according to the name of the account, for example, if the name of the account is "The Guardian" and the core function is "News production", do not add "Media organization" or "News organization" to the value not "security" or "defense". 
 
 ###Search & Verification Instructions (CRITICAL)
 
@@ -253,7 +254,23 @@ def ask_mirothinker(facebook_id, page_name, username, external_link,
     prompt = prompt_template + user_data
     
     # Add system instruction
-    full_prompt = f"You are AccountContextFinder. Return only the requested variables. If information is insufficient, state 'Insufficient verified information to determine.' for that field.\n\n{prompt}"
+    full_prompt = f"""You are AccountContextFinder. 
+
+IMPORTANT: Return ALL nine variables in the exact format specified:
+1. Legal Nature: [value]
+2. Profit Status: [value]
+3. Ownership: [value]
+4. Sector: [value]
+5. Type: [value]
+6. Subtype: [value]
+7. Public Authority: [value]
+8. State affiliation: [value]
+9. Core Function: [value]
+
+If information is insufficient for any variable, state 'Insufficient verified information to determine.' for that field.
+Do not skip any variables. Return all nine variables.
+
+{prompt}"""
     
     # Use direct model inference
     global _model, _tokenizer
@@ -304,26 +321,93 @@ def ask_mirothinker(facebook_id, page_name, username, external_link,
         return f"Error: {e}"
 
 def parse_variables(response):
+    """
+    Parse variables from model response with multiple parsing strategies.
+    Returns dict with all variables and the raw response.
+    """
     items = ['Legal Nature', 'Profit Status', 'Ownership', 'Sector', 'Type', 'Subtype',
              'Public Authority', 'State affiliation', 'Core Function']
-    result = {k:'' for k in items}
-    if response is None or not isinstance(response, str):
+    result = {k: '' for k in items}
+    result['Raw Response'] = response if response else ''
+    
+    if response is None or not isinstance(response, str) or not response.strip():
         return result
-    for line in response.split('\n'):
-        line = line.strip()
-        for key in items:
-            lkey = key.lower()
-            if lkey in line.lower():
-                val = line.split(':',1)
-                if len(val) >= 2:
-                    result[key] = val[1].strip()
-    nums = ('1.','2.','3.','4.','5.','6.','7.','8.','9.')
-    if response.count("\n")<=12 and any(n in response for n in nums):
-        lines = [l.strip() for l in response.split('\n') if l.strip()]
-        for i, key in enumerate(items):
-            for l in lines:
-                if l.startswith(f"{i+1}."):
-                    result[key] = l.split('.',1)[1].strip(": \t")
+    
+    # Strategy 1: Look for numbered list format (1. Variable Name: value)
+    nums = ('1.', '2.', '3.', '4.', '5.', '6.', '7.', '8.', '9.')
+    lines = [l.strip() for l in response.split('\n') if l.strip()]
+    
+    # Check if response uses numbered format
+    numbered_format = any(l.startswith(n) for l in lines for n in nums)
+    
+    if numbered_format:
+        for i, key in enumerate(items, 1):
+            for line in lines:
+                # Match patterns like "1. Legal Nature: value" or "1. Legal Nature - value"
+                if line.startswith(f"{i}."):
+                    # Try colon separator first
+                    if ':' in line:
+                        parts = line.split(':', 1)
+                        if len(parts) >= 2:
+                            result[key] = parts[1].strip()
+                            break
+                    # Try dash separator
+                    elif '-' in line:
+                        parts = line.split('-', 1)
+                        if len(parts) >= 2:
+                            result[key] = parts[1].strip()
+                            break
+                    # Just remove the number prefix
+                    else:
+                        cleaned = line.split('.', 1)[1].strip()
+                        result[key] = cleaned.strip(": \t-")
+                        break
+    
+    # Strategy 2: Look for "Variable Name: value" format (case-insensitive)
+    if not numbered_format or any(v == '' for v in result.values() if v != result['Raw Response']):
+        for line in lines:
+            line_lower = line.lower()
+            for key in items:
+                key_lower = key.lower()
+                # Check if line contains the key name
+                if key_lower in line_lower:
+                    # Try colon separator
+                    if ':' in line:
+                        # Make sure the key appears before the colon
+                        colon_idx = line.find(':')
+                        key_idx = line_lower.find(key_lower)
+                        if key_idx < colon_idx:
+                            parts = line.split(':', 1)
+                            if len(parts) >= 2:
+                                value = parts[1].strip()
+                                # Only update if we haven't found a value yet or this is more specific
+                                if result[key] == '' or len(value) > len(result[key]):
+                                    result[key] = value
+                    # Try dash separator
+                    elif '-' in line:
+                        dash_idx = line.find('-')
+                        key_idx = line_lower.find(key_lower)
+                        if key_idx < dash_idx:
+                            parts = line.split('-', 1)
+                            if len(parts) >= 2:
+                                value = parts[1].strip()
+                                if result[key] == '' or len(value) > len(result[key]):
+                                    result[key] = value
+    
+    # Strategy 3: Look for patterns like "Legal Nature = value" or "Legal Nature: value" on same line
+    for key in items:
+        if result[key] == '':
+            key_lower = key.lower()
+            for line in lines:
+                line_lower = line.lower()
+                if key_lower in line_lower:
+                    # Try "=" separator
+                    if '=' in line:
+                        parts = line.split('=', 1)
+                        if len(parts) >= 2 and key_lower in parts[0].lower():
+                            result[key] = parts[1].strip()
+                            break
+    
     return result
 
 def main(input_file, model_name="miromind-ai/MiroThinker-v1.5-30B", 
@@ -349,6 +433,10 @@ def main(input_file, model_name="miromind-ai/MiroThinker-v1.5-30B",
     for v in res_vars:
         if v not in df.columns:
             df[v] = ""
+    
+    # Add raw response column for debugging
+    if 'Raw Response' not in df.columns:
+        df['Raw Response'] = ""
     
     # Load model
     print("Loading MiroThinker model (this may take a few minutes)...")
@@ -378,7 +466,13 @@ def main(input_file, model_name="miromind-ai/MiroThinker-v1.5-30B",
         )
         parsed = parse_variables(chat_resp)
         for v in res_vars:
-            df.at[idx, v] = parsed.get(v,"")
+            df.at[idx, v] = parsed.get(v, "")
+        
+        # Save raw response for debugging
+        df.at[idx, 'Raw Response'] = parsed.get('Raw Response', "")
+        
+        # Print parsed results for verification
+        print(f"  Parsed {sum(1 for v in res_vars if parsed.get(v, ''))}/{len(res_vars)} variables")
         
         # Save progress periodically
         if (idx + 1) % 10 == 0:
